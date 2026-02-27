@@ -34,7 +34,7 @@
 ## 目录结构
 
 ```text
-D:\test
+ops-integrated-admin-console
 ├─ backend
 │  ├─ main.go
 │  ├─ .env
@@ -184,7 +184,7 @@ VITE_API_BASE=http://127.0.0.1:8080
 
 版本检查命令：
 
-```powershell
+```bash
 go version
 node -v
 npm -v
@@ -193,23 +193,30 @@ git --version
 
 ## 快速开始
 
-### 1. 启动后端
+### 1. 拉取代码
 
-```powershell
-cd D:\test\backend
+```bash
+git clone https://github.com/zyx3721/ops-integrated-admin-console.git
+cd ops-integrated-admin-console
+```
+
+### 2. 启动后端
+
+```bash
+cd backend
 go mod tidy
 go run .
 ```
 
-### 2. 启动前端
+### 3. 启动前端
 
-```powershell
-cd D:\test\frontend
+```bash
+cd ../frontend
 npm install
 npm run dev
 ```
 
-### 3. 访问系统
+### 4. 访问系统
 
 - 前端默认开发地址：`http://127.0.0.1:5173`
 - 后端健康检查：`http://127.0.0.1:8080/healthz`
@@ -261,15 +268,15 @@ npm run dev
 
 后端构建：
 
-```powershell
-cd D:\test\backend
+```bash
+cd ops-integrated-admin-console/backend
 go build ./...
 ```
 
 前端构建：
 
-```powershell
-cd D:\test\frontend
+```bash
+cd ../frontend
 npm run build
 ```
 
