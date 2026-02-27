@@ -1,0 +1,20 @@
+﻿# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Git
+*.log
+
+# Backend
+backend/*.exe
+backend/db/*.db
+backend/data/ad/uploads/*
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Build cache
+**/.cache/

@@ -1,0 +1,63 @@
+html, body, #app {
+  margin: 0;
+  width: 100%;
+  min-height: 100vh;
+  font-family: "Segoe UI", "PingFang SC", sans-serif;
+}
+
+.login-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(120deg, #dbefff 0%, #f5f7fa 50%, #f4f6f8 100%);
+}
+
+.login-card {
+  width: 420px;
+}
+
+.page-layout {
+  min-height: 100vh;
+}
+
+.sider-title {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 700;
+  border-bottom: 1px solid #e7eaef;
+}
+
+.topbar {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+}
+
+.top-title {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.result-box {
+  margin-top: 8px;
+  padding: 8px;
+  min-height: 72px;
+  background: #f7fafc;
+  border: 1px solid #dde5ec;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+}

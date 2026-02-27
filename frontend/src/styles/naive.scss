@@ -1,0 +1,33 @@
+.n-card {
+  border: 1px solid var(--ops-border);
+  border-radius: var(--ops-radius-lg) !important;
+  box-shadow: var(--ops-shadow-md) !important;
+}
+
+.n-button.n-button--primary-type {
+  background: linear-gradient(135deg, var(--ops-brand), var(--ops-brand-strong)) !important;
+  border-color: transparent !important;
+}
+
+.n-layout-sider {
+  border-right-color: #d5e2ed !important;
+}
+
+.n-layout-header {
+  border-bottom-color: #d5e2ed !important;
+}
+
+.n-form-item-label__text {
+  color: var(--ops-text-2);
+  font-weight: 600;
+}
+
+.n-input .n-input__border,
+.n-base-selection .n-base-selection__border {
+  border-color: #c9d9e8 !important;
+}
+
+.n-input:hover .n-input__border,
+.n-base-selection:hover .n-base-selection__border {
+  border-color: #9ebbd6 !important;
+}

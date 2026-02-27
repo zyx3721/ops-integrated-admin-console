@@ -1,0 +1,87 @@
+import { defineStore } from 'pinia'
+
+function normalizeApiBase(raw: string): string {
+  return raw.trim().replace(/\/+$/, '')
+}
+
+function defaultApiBase(): string {
+  const envBase = import.meta.env.VITE_API_BASE as string | undefined
+  if (envBase && envBase.trim()) {
+    return normalizeApiBase(envBase)
+  }
+
+  if (typeof window !== 'undefined') {
+    const { protocol, hostname, port } = window.location
+    if (port && port !== '3000') {
+      return normalizeApiBase(`${protocol}//${hostname}${port ? `:${port}` : ''}`)
+    }
+  }
+
+  return 'http://127.0.0.1:8080'
+}
+
+export const useAuthStore = defineStore('auth', {
+  state: () => ({
+    apiBase: defaultApiBase(),
+    token: localStorage.getItem('ops_token') || '',
+    username: localStorage.getItem('ops_username') || '',
+    expireAt: localStorage.getItem('ops_expire_at') || '',
+    loadedProjects: {} as Record<string, boolean>,
+  }),
+  actions: {
+    setSession(token: string, username: string, expireAt = '') {
+      this.token = token
+      this.username = username
+      this.expireAt = expireAt
+      localStorage.setItem('ops_token', token)
+      localStorage.setItem('ops_username', username)
+      if (expireAt) {
+        localStorage.setItem('ops_expire_at', expireAt)
+      } else {
+        localStorage.removeItem('ops_expire_at')
+      }
+    },
+    isSessionValid() {
+      if (!this.token) {
+        return false
+      }
+      const rawExpire = (this.expireAt || '').trim()
+      if (!rawExpire) {
+        return true
+      }
+      const ts = Date.parse(rawExpire)
+      if (Number.isNaN(ts)) {
+        return true
+      }
+      return Date.now() < ts
+    },
+    ensureSession() {
+      if (!this.token) {
+        return false
+      }
+      if (this.isSessionValid()) {
+        return true
+      }
+      this.clearSession()
+      return false
+    },
+    clearSession() {
+      this.token = ''
+      this.username = ''
+      this.expireAt = ''
+      this.loadedProjects = {}
+      localStorage.removeItem('ops_token')
+      localStorage.removeItem('ops_username')
+      localStorage.removeItem('ops_expire_at')
+    },
+    markProjectLoaded(project: string, loaded = true) {
+      this.loadedProjects[project] = loaded
+    },
+    resetProjectLoaded(project: string) {
+      delete this.loadedProjects[project]
+    },
+    clearLoadedProjects() {
+      this.loadedProjects = {}
+    },
+  },
+})
