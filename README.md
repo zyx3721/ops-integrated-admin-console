@@ -171,6 +171,26 @@ CREDENTIAL_SECRET_FALLBACKS=change-me-ops-credential-secret
 VITE_API_BASE=http://127.0.0.1:8080
 ```
 
+## 环境要求
+
+建议先确认本机运行环境，再执行安装与启动。
+
+| 组件 | 最低要求 | 推荐版本 | 说明 |
+| --- | --- | --- | --- |
+| Go | 1.26+ | 1.26.x | 后端 `go.mod` 当前声明为 `go 1.26` |
+| Node.js | 18+ | 20 LTS | 用于前端开发与构建 |
+| npm | 9+ | 10+ | 与 Node.js 版本配套使用 |
+| Git | 2.30+ | 最新稳定版 | 用于代码拉取与发布 |
+
+版本检查命令：
+
+```powershell
+go version
+node -v
+npm -v
+git --version
+```
+
 ## 快速开始
 
 ### 1. 启动后端
