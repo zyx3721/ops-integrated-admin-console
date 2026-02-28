@@ -5,19 +5,13 @@ function normalizeApiBase(raw: string): string {
 }
 
 function defaultApiBase(): string {
-  const envBase = import.meta.env.VITE_API_BASE as string | undefined
-  if (envBase && envBase.trim()) {
-    return normalizeApiBase(envBase)
+  // 浏览器端请求默认走同源（/api），由 Vite dev server 代理到 VITE_API_BASE。
+  // 如需强制浏览器直连后端，可在前端环境变量里配置 VITE_BROWSER_API_BASE。
+  const browserBase = import.meta.env.VITE_BROWSER_API_BASE as string | undefined
+  if (browserBase && browserBase.trim()) {
+    return normalizeApiBase(browserBase)
   }
-
-  if (typeof window !== 'undefined') {
-    const { protocol, hostname, port } = window.location
-    if (port && port !== '3000') {
-      return normalizeApiBase(`${protocol}//${hostname}${port ? `:${port}` : ''}`)
-    }
-  }
-
-  return 'http://127.0.0.1:8080'
+  return ''
 }
 
 export const useAuthStore = defineStore('auth', {
