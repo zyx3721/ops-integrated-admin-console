@@ -1,13 +1,18 @@
 ﻿<template>
-  <n-layout has-sider class="page-layout">
-    <n-layout-sider width="220" bordered class="main-sider">
+  <n-layout :has-sider="!isMobile" class="page-layout">
+    <n-layout-sider v-if="!isMobile" width="220" bordered class="main-sider">
       <div class="sider-title">运维控制台</div>
       <n-menu class="main-menu" :value="activeView" :options="menuOptions" @update:value="onMenuSelect" />
     </n-layout-sider>
 
     <n-layout class="main-shell">
       <n-layout-header bordered class="topbar">
-        <div class="top-title">运维管理后台系统</div>
+        <div class="top-main">
+          <n-button v-if="isMobile" quaternary size="small" class="mobile-menu-btn" @click="showMainMenuDrawer = true">
+            菜单
+          </n-button>
+          <div class="top-title">运维管理后台系统</div>
+        </div>
         <div class="top-actions">
           <span>管理员：{{ auth.username }}</span>
           <span class="cache-countdown">缓存倒计时：{{ formatCountdown(cacheCountdownSeconds) }}</span>
@@ -33,7 +38,7 @@
           <template #description>正在执行项目自动登录，请稍候...</template>
 
           <n-card v-if="activeView === 'config'" title="项目管理账号配置" size="small">
-            <n-grid :cols="3" :x-gap="12">
+            <n-grid :cols="credentialGridCols" :x-gap="12" :y-gap="12">
               <n-grid-item v-for="item in credentials" :key="item.project_type">
                 <n-card :title="credentialTitle(item.project_type)" size="small">
                   <n-form>
@@ -50,8 +55,8 @@
             </n-grid>
           </n-card>
 
-          <n-layout v-if="isProjectView" has-sider class="project-layout">
-            <n-layout-sider width="220" bordered class="project-sider">
+          <n-layout v-if="isProjectView" :has-sider="!isMobile" class="project-layout">
+            <n-layout-sider v-if="!isMobile" width="220" bordered class="project-sider">
               <div class="project-func-title">
                 <span class="project-func-dot" :class="`project-func-dot--${activeView}`"></span>
                 <span>功能列表</span>
@@ -66,6 +71,15 @@
 
             <n-layout>
               <n-layout-content content-style="padding: 12px;">
+                <div v-if="isMobile" class="mobile-action-switch">
+                  <span class="mobile-action-switch__label">功能选择</span>
+                  <n-select
+                    :value="currentProjectAction"
+                    :options="projectFunctionSelectOptions"
+                    placeholder="请选择功能"
+                    @update:value="onProjectFunctionSelect"
+                  />
+                </div>
                 <n-card v-if="currentProjectForm" :title="currentProjectForm.title" size="small" :class="['project-action-card', `project-action-card--${activeView}`]">
                   <div class="func-panel">
                     <div class="func-input">
@@ -223,7 +237,8 @@
             <div class="logs-toolbar">
               <n-button size="small" @click="loadLogs(logPage, logPageSize)">刷新日志</n-button>
             </div>
-            <n-table class="logs-table" size="small" striped style="margin-top: 12px">
+            <div class="logs-table-wrap">
+              <n-table class="logs-table" size="small" striped style="margin-top: 12px">
               <thead>
                 <tr>
                   <th>ID</th>
@@ -244,7 +259,8 @@
                   <td>{{ log.detail }}</td>
                 </tr>
               </tbody>
-            </n-table>
+              </n-table>
+            </div>
             <n-pagination
               v-model:page="logPage"
               v-model:page-size="logPageSize"
@@ -260,6 +276,12 @@
       </n-layout-content>
     </n-layout>
   </n-layout>
+
+  <n-drawer v-model:show="showMainMenuDrawer" placement="left" :width="260">
+    <n-drawer-content title="导航菜单" closable>
+      <n-menu class="mobile-drawer-menu" :value="activeView" :options="menuOptions" @update:value="onMobileMenuSelect" />
+    </n-drawer-content>
+  </n-drawer>
 
   <n-modal
     v-model:show="showPwd"
@@ -306,6 +328,8 @@ import {
   NSwitch,
   NUpload,
   NUploadDragger,
+  NDrawer,
+  NDrawerContent,
   useMessage,
 } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
@@ -358,6 +382,14 @@ const activeView = ref('config')
 const showPwd = ref(false)
 const oldPwd = ref('')
 const newPwd = ref('')
+const showMainMenuDrawer = ref(false)
+const viewportWidth = ref(typeof window === 'undefined' ? 1280 : window.innerWidth)
+const isMobile = computed(() => viewportWidth.value <= 900)
+const credentialGridCols = computed(() => {
+  if (viewportWidth.value <= 760) return 1
+  if (viewportWidth.value <= 1260) return 2
+  return 3
+})
 
 const credentials = ref<any[]>([])
 const logs = ref<any[]>([])
@@ -620,6 +652,12 @@ const currentProjectAction = computed(() => {
 })
 
 const projectFunctionMenuOptions = computed(() => currentProjectForms.value.map((f) => ({ label: f.title, key: f.action })))
+const projectFunctionSelectOptions = computed(() =>
+  currentProjectForms.value.map((f) => ({
+    label: f.title,
+    value: f.action,
+  })),
+)
 
 const currentProjectForm = computed(() => {
   return currentProjectForms.value.find((f) => f.action === currentProjectAction.value) || currentProjectForms.value[0]
@@ -1381,6 +1419,17 @@ async function handleLogPageSizeChange(size: number) {
   await loadLogs(1, size)
 }
 
+function syncViewportState() {
+  viewportWidth.value = window.innerWidth
+  if (!isMobile.value) {
+    showMainMenuDrawer.value = false
+  }
+}
+
+function onMobileMenuSelect(key: string) {
+  showMainMenuDrawer.value = false
+  void onMenuSelect(key)
+}
 async function onMenuSelect(key: string) {
   if (key === 'ad' || key === 'print' || key === 'vpn') {
     try {
@@ -1461,6 +1510,8 @@ function handleVisibilityOrFocus() {
 onMounted(async () => {
   document.addEventListener('visibilitychange', handleVisibilityOrFocus)
   window.addEventListener('focus', handleVisibilityOrFocus)
+  window.addEventListener('resize', syncViewportState)
+  syncViewportState()
   if (!ensureSessionAliveBeforeAction()) {
     return
   }
@@ -1472,6 +1523,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', handleVisibilityOrFocus)
   window.removeEventListener('focus', handleVisibilityOrFocus)
+  window.removeEventListener('resize', syncViewportState)
   if (cacheCountdownTimer !== null) {
     window.clearInterval(cacheCountdownTimer)
     cacheCountdownTimer = null
@@ -1488,6 +1540,7 @@ onBeforeUnmount(() => {
 
 .page-layout {
   height: 100vh;
+  height: 100dvh;
   position: relative;
   background: transparent;
 }
@@ -1555,6 +1608,7 @@ onBeforeUnmount(() => {
 
 .main-shell {
   height: 100vh;
+  height: 100dvh;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -1655,6 +1709,35 @@ onBeforeUnmount(() => {
   backdrop-filter: blur(10px);
 }
 
+.top-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mobile-menu-btn {
+  border-radius: 8px;
+  border: 1px solid #c8dced;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.mobile-action-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 10px;
+  border: 1px solid #d6e5f1;
+  border-radius: 12px;
+  background: #f7fbff;
+}
+
+.mobile-action-switch__label {
+  flex-shrink: 0;
+  font-size: 13px;
+  color: #355c7a;
+  font-weight: 600;
+}
 .top-title {
   font-size: 19px;
   font-weight: 700;
@@ -1857,6 +1940,21 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.logs-table-wrap {
+  overflow-x: auto;
+}
+
+.logs-table {
+  min-width: 760px;
+}
+
+.mobile-drawer-menu {
+  margin-top: 4px;
+}
+
+.mobile-drawer-menu :deep(.n-menu-item-content) {
+  border-radius: 10px;
+}
 .logs-table :deep(th),
 .logs-table :deep(td) {
   text-align: center;
@@ -1942,13 +2040,36 @@ onBeforeUnmount(() => {
     gap: 8px;
   }
 
+  .top-main {
+    width: 100%;
+  }
+
   .top-actions {
     width: 100%;
     flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .cache-countdown {
+    padding: 3px 8px;
+  }
+
+  .mobile-action-switch {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .upload-actions {
+    flex-wrap: wrap;
+  }
+
+  .logs-table {
+    min-width: 680px;
+  }
+
+  .error-reason-cell {
+    width: 220px;
   }
 }
 </style>
-
-
-
 

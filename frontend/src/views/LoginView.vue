@@ -9,9 +9,9 @@
 
           <n-form
             :class="['login-form', mode === 'register' ? 'is-register' : 'is-login']"
-            label-placement="left"
-            label-align="right"
-            :label-width="96"
+            :label-placement="isMobile ? 'top' : 'left'"
+            :label-align="isMobile ? 'left' : 'right'"
+            :label-width="isMobile ? undefined : 96"
           >
             <n-form-item v-if="mode === 'login'" label="管理员账号">
               <n-input v-model:value="loginUsername" placeholder="请输入账号" />
@@ -65,7 +65,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { NCard, NForm, NFormItem, NInput, NButton, NCheckbox, useMessage } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
@@ -117,6 +117,20 @@ const registerPassword = ref('')
 const registerConfirmPassword = ref('')
 const rememberMe = ref(rememberedLogin.remembered)
 const loading = ref(false)
+const isMobile = ref(typeof window !== 'undefined' ? window.innerWidth <= 768 : false)
+
+function syncViewportState() {
+  isMobile.value = window.innerWidth <= 768
+}
+
+onMounted(() => {
+  window.addEventListener('resize', syncViewportState)
+  syncViewportState()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', syncViewportState)
+})
 
 watch(rememberMe, (checked) => {
   if (!checked) {
@@ -394,4 +408,66 @@ async function onPrimaryAction() {
   opacity: 0;
   transform: translateY(14px);
 }
+
+@media (max-width: 768px) {
+  .login-wrap {
+    align-items: flex-start;
+    padding: 14px;
+  }
+
+  .auth-panel-wrap {
+    max-width: 100%;
+  }
+
+  .login-card {
+    border-radius: 16px !important;
+    margin-top: 9vh;
+  }
+
+  .login-card :deep(.n-card-header) {
+    padding: 14px 16px 4px;
+  }
+
+  .login-card :deep(.n-card__content) {
+    padding: 10px 16px 16px !important;
+  }
+
+  .login-form {
+    width: 100%;
+  }
+
+  .login-card :deep(.n-card-header__main) {
+    font-size: 26px;
+  }
+
+  .login-subtitle {
+    font-size: 14px;
+    margin-bottom: 12px;
+  }
+
+  .login-options {
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 8px 0 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .login-wrap {
+    padding: 10px;
+  }
+
+  .login-card {
+    margin-top: 6vh;
+  }
+
+  .login-card :deep(.n-card-header__main) {
+    font-size: 24px;
+  }
+
+  .switch-link {
+    font-size: 13px;
+  }
+}
 </style>
+
