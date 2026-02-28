@@ -1,4 +1,4 @@
-package runtime
+﻿package runtime
 
 import (
 	"context"
@@ -20,7 +20,7 @@ import (
 )
 
 func (s *server) route(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/healthz" && r.Method == http.MethodGet {
+	if (r.URL.Path == "/health" || r.URL.Path == "/api/health") && r.Method == http.MethodGet {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return
 	}
@@ -682,3 +682,4 @@ func (s *server) logAction(userID int64, username, action, projectType, detail s
 	detail = normalizeGarbledText(detail)
 	_, _ = s.db.Exec(`INSERT INTO operation_logs(user_id,username,action,project_type,detail,created_at) VALUES(?,?,?,?,?,?)`, userID, username, action, projectType, detail, nowStr())
 }
+
