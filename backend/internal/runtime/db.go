@@ -10,8 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-
-	"golang.org/x/crypto/bcrypt"
 )
 
 func initDB(db *sql.DB, cfg appConfig) error {
@@ -65,21 +63,6 @@ func initDB(db *sql.DB, cfg appConfig) error {
 	}
 	var err error
 
-	var cnt int
-	if err := db.QueryRow(`SELECT COUNT(1) FROM admins`).Scan(&cnt); err != nil {
-		return err
-	}
-	if cnt == 0 {
-		now := nowStr()
-		hash, err := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
-		if err != nil {
-			return err
-		}
-		if _, err = db.Exec(`INSERT INTO admins(username,password_hash,created_at,updated_at) VALUES(?,?,?,?)`, "admin", string(hash), now, now); err != nil {
-			return err
-		}
-	}
-
 	if err = migrateProjectCredentialsSchema(db); err != nil {
 		return err
 	}
@@ -121,8 +104,13 @@ func migrateProjectCredentialsSchema(db *sql.DB) error {
 	}
 
 	var defaultUserID int64
+	hasDefaultUser := true
 	if err = tx.QueryRow(`SELECT id FROM admins ORDER BY id ASC LIMIT 1`).Scan(&defaultUserID); err != nil {
-		return err
+		if errors.Is(err, sql.ErrNoRows) {
+			hasDefaultUser = false
+		} else {
+			return err
+		}
 	}
 
 	rows, err := tx.Query(`SELECT project_type,account,password,updated_at FROM project_credentials`)
@@ -139,10 +127,12 @@ func migrateProjectCredentialsSchema(db *sql.DB) error {
 		if strings.TrimSpace(updatedAt) == "" {
 			updatedAt = nowStr()
 		}
-		if _, err = tx.Exec(`INSERT OR IGNORE INTO project_credentials_new(user_id,project_type,account,password,updated_at) VALUES(?,?,?,?,?)`,
-			defaultUserID, projectType, account, password, updatedAt,
-		); err != nil {
-			return err
+		if hasDefaultUser {
+			if _, err = tx.Exec(`INSERT OR IGNORE INTO project_credentials_new(user_id,project_type,account,password,updated_at) VALUES(?,?,?,?,?)`,
+				defaultUserID, projectType, account, password, updatedAt,
+			); err != nil {
+				return err
+			}
 		}
 	}
 	if err = rows.Err(); err != nil {

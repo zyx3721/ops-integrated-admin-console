@@ -1,4 +1,4 @@
-﻿# 运维集成管理后台系统
+# 运维集成管理后台系统
 
 一个面向企业内网运维场景的前后端分离系统，聚合 AD 管理、打印管理、VPN 管理，并提供统一登录、项目凭据隔离、异步执行进度与操作审计能力。
 
@@ -76,7 +76,7 @@ ops-integrated-admin-console
 - 管理员登录
 - 登录态校验（Token + 过期时间）
 - 修改管理员密码
-- 数据库初始化时自动创建默认管理员：`admin / admin123`
+- 首次使用需先注册管理员账号（系统不再内置默认账号）
 
 ## 3.2 项目凭据
 
@@ -243,9 +243,7 @@ nohup npm run dev > frontend.log 2>&1 &
 ## 6.4 访问系统
 
 - **首页**：`http://localhost:3000`
-- **默认管理员账号**：
-  - 用户名：`admin`
-  - 密码：`admin123`
+- **首次访问**：请先注册管理员账号后再登录
 
 # 七、生产环境部署
 
@@ -313,6 +311,7 @@ After=network.target
 
 [Service]
 Type=simple
+WorkingDirectory=/data/ops-integrated-admin-console/backend
 ExecStart=/data/ops-integrated-admin-console/backend/ops-backend
 
 StandardOutput=append:/data/ops-integrated-admin-console/backend/app.log
@@ -488,9 +487,7 @@ systemctl reload nginx
 ## 7.5 访问系统
 
 - **首页**：`http://your-domain.com`
-- **默认管理员账号**：
-  - 用户名：`admin`
-  - 密码：`admin123`
+- **首次访问**：请先注册管理员账号后再登录
 
 - **后端健康检查**：`http://your-domain.com/health` 
 
@@ -604,7 +601,7 @@ systemctl reload nginx
 
 - 固定路径：`backend/db/ops_admin.db`
 - 数据库不存在时会自动初始化表结构
-- 管理员表为空时自动创建默认管理员 `admin/admin123`
+- 管理员表为空时不会自动注入默认账号，需由注册接口创建首个管理员
 - 主要表：
   - `admins`
   - `auth_tokens`

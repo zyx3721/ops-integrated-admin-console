@@ -1,4 +1,4 @@
-﻿package runtime
+package runtime
 
 import (
 	"context"
@@ -82,6 +82,16 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var adminCount int
+	if err := s.db.QueryRow(`SELECT COUNT(1) FROM admins`).Scan(&adminCount); err != nil {
+		writeJSON(w, http.StatusInternalServerError, apiError{Error: "查询管理员失败"})
+		return
+	}
+	if adminCount == 0 {
+		writeJSON(w, http.StatusBadRequest, apiError{Error: "暂无管理员账号，请先注册"})
+		return
+	}
+
 	var userID int64
 	var username, hash string
 	err := s.db.QueryRow(`SELECT id,username,password_hash FROM admins WHERE username=?`, req.Username).Scan(&userID, &username, &hash)
@@ -120,7 +130,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Token:                token,
 		Username:             username,
 		ExpireAt:             exp.Format(time.RFC3339),
-		DefaultPwd:           req.Password == "admin123",
+		DefaultPwd:           false,
 		ProjectCacheTTLInSec: int(s.cfg.ProjectCacheTTL.Seconds()),
 	})
 }
@@ -682,4 +692,3 @@ func (s *server) logAction(userID int64, username, action, projectType, detail s
 	detail = normalizeGarbledText(detail)
 	_, _ = s.db.Exec(`INSERT INTO operation_logs(user_id,username,action,project_type,detail,created_at) VALUES(?,?,?,?,?,?)`, userID, username, action, projectType, detail, nowStr())
 }
-
