@@ -228,7 +228,7 @@ npm run dev
 
 ### 5. 访问系统
 
-- 前端默认开发地址：`http://127.0.0.1:5173`
+- 前端默认开发地址：`http://127.0.0.1:3000`
 - 后端健康检查：`http://127.0.0.1:8080/healthz`
 
 ## 数据库说明
@@ -280,7 +280,7 @@ npm run dev
 
 ```bash
 cd ops-integrated-admin-console/backend
-go build ./...
+go build -o ops-backend main.go
 ```
 
 前端构建：
@@ -294,5 +294,6 @@ npm run build
 
 - 前端基础模板参考：`mars-admin`
 - 原业务逻辑参考：`AD_Tool`、`Print_Tool`、`VPN_Tool`（用于迁移对照）
+
 
 
