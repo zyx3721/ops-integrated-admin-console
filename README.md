@@ -37,7 +37,8 @@
 ops-integrated-admin-console
 ├─ backend
 │  ├─ main.go
-│  ├─ .env
+│  ├─ .env.example
+│  ├─ .env              # 本地复制生成（不提交）
 │  ├─ go.mod / go.sum
 │  ├─ db
 │  │  └─ ops_admin.db
@@ -145,7 +146,8 @@ ops-integrated-admin-console
 
 ## 环境变量
 
-后端环境变量文件：`backend/.env`
+后端环境变量示例文件：`backend/.env.example`  
+后端实际环境变量文件：`backend/.env`（由示例复制后填写）
 
 ```env
 # 后端服务配置（已脱敏示例，发布到公网仓库可直接保留）
@@ -200,7 +202,15 @@ git clone https://github.com/zyx3721/ops-integrated-admin-console.git
 cd ops-integrated-admin-console
 ```
 
-### 2. 启动后端
+### 2. 初始化环境变量
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+复制后按你的实际环境修改 `backend/.env`（内网地址、密钥等）。
+
+### 3. 启动后端
 
 ```bash
 cd backend
@@ -208,7 +218,7 @@ go mod tidy
 go run .
 ```
 
-### 3. 启动前端
+### 4. 启动前端
 
 ```bash
 cd ../frontend
@@ -216,7 +226,7 @@ npm install
 npm run dev
 ```
 
-### 4. 访问系统
+### 5. 访问系统
 
 - 前端默认开发地址：`http://127.0.0.1:5173`
 - 后端健康检查：`http://127.0.0.1:8080/healthz`
@@ -284,3 +294,5 @@ npm run build
 
 - 前端基础模板参考：`mars-admin`
 - 原业务逻辑参考：`AD_Tool`、`Print_Tool`、`VPN_Tool`（用于迁移对照）
+
+

@@ -11,6 +11,7 @@ Thumbs.db
 backend/*.exe
 backend/db/*.db
 backend/data/ad/uploads/*
+backend/.env
 
 # Frontend
 frontend/node_modules/
@@ -18,3 +19,4 @@ frontend/dist/
 
 # Build cache
 **/.cache/
+
