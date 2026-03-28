@@ -9,8 +9,15 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
+  if (auth.hasExceededReopenIdleTimeout()) {
+    await auth.cleanupSessionAfterReopenTimeout()
+    if (to.path !== '/login') {
+      return '/login'
+    }
+    return
+  }
   const validSession = auth.ensureSession()
   if (to.path !== '/login' && !validSession) {
     return '/login'

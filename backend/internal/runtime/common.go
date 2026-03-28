@@ -142,3 +142,10 @@ func toBoolDefault(v interface{}, def bool) bool {
 	}
 	return toBool(v)
 }
+
+func projectSessionStateFromDidLogin(didLogin bool) string {
+	if didLogin {
+		return "first_login"
+	}
+	return "reused"
+}

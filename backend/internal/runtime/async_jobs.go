@@ -79,11 +79,11 @@ func (s *server) handleProjectOperateAsyncStart(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusBadRequest, apiError{Error: "操作类型不能为空"})
 		return
 	}
+
 	params := cloneInterfaceMap(req.Params)
 	if params == nil {
 		params = map[string]interface{}{}
 	}
-
 	if req.ProjectType == "vpn" && req.Action == "delete_users" && toBoolDefault(params["remote_firewall"], false) {
 		fwAccount, fwPassword, fwErr := s.getProjectCredential(u.ID, "vpn_firewall")
 		if fwErr != nil {
@@ -96,24 +96,25 @@ func (s *server) handleProjectOperateAsyncStart(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	account, password, err := s.getProjectCredential(u.ID, req.ProjectType)
+	_, didLogin, _, err := s.ensureProjectSession(u, req.ProjectType, false)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, apiError{Error: err.Error()})
 		return
 	}
 
-	job, err := s.createAsyncOperateJob(u, req.ProjectType, req.Action)
-	if err != nil {
+	job, createErr := s.createAsyncOperateJob(u, req.ProjectType, req.Action)
+	if createErr != nil {
 		writeJSON(w, http.StatusInternalServerError, apiError{Error: "创建异步任务失败"})
 		return
 	}
-	go s.runAsyncOperate(job.ID, u, req.ProjectType, req.Action, params, account, password)
+	go s.runAsyncOperate(job.ID, u, req.ProjectType, req.Action, params)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"job_id":       job.ID,
-		"status":       job.Status,
-		"created_at":   job.CreatedAt.Format(time.RFC3339),
-		"project_type": req.ProjectType,
-		"action":       req.Action,
+		"job_id":        job.ID,
+		"status":        job.Status,
+		"created_at":    job.CreatedAt.Format(time.RFC3339),
+		"project_type":  req.ProjectType,
+		"action":        req.Action,
+		"session_state": projectSessionStateFromDidLogin(didLogin),
 	})
 }
 
@@ -164,7 +165,7 @@ func (s *server) createAsyncOperateJob(u authedUser, projectType, action string)
 	return job, nil
 }
 
-func (s *server) runAsyncOperate(jobID string, u authedUser, projectType, action string, params map[string]interface{}, account, password string) {
+func (s *server) runAsyncOperate(jobID string, u authedUser, projectType, action string, params map[string]interface{}) {
 	progressCB := project.ProgressCallback(func(ev project.ProgressEvent) {
 		s.updateAsyncOperateJob(jobID, func(job *asyncOperateJob) {
 			line := strings.TrimSpace(ev.Log)
@@ -189,7 +190,27 @@ func (s *server) runAsyncOperate(jobID string, u authedUser, projectType, action
 	}
 	params["__progress_cb"] = progressCB
 
-	res, err := s.projectOperate(projectType, account, password, action, params)
+	entry, _, _, err := s.ensureProjectSession(u, projectType, false)
+	if err != nil {
+		errMsg := strings.TrimSpace(err.Error())
+		if errMsg == "" {
+			errMsg = "执行失败"
+		}
+		s.updateAsyncOperateJob(jobID, func(job *asyncOperateJob) {
+			job.Status = asyncJobStatusFailed
+			job.OK = false
+			job.Done = true
+			job.Message = "执行失败"
+			job.Error = errMsg
+			job.Progress = 100
+			job.LogLines = append(job.LogLines, "执行失败："+errMsg)
+			job.ResultText = strings.Join(job.LogLines, "\n")
+		})
+		s.logAction(u.ID, u.Username, "project_operate_failed", projectType, fmt.Sprintf("action=%s, err=%s", action, errMsg))
+		return
+	}
+
+	res, err := s.operateWithProjectSession(entry, action, params)
 	if err != nil {
 		errMsg := strings.TrimSpace(err.Error())
 		if errMsg == "" {

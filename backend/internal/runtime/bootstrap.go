@@ -31,14 +31,16 @@ type appConfig struct {
 	FirewallSSHAddr string
 	CredentialKey   string
 	ProjectCacheTTL time.Duration
+	SessionIdleTTL  time.Duration
 }
 
 type server struct {
-	db       *sql.DB
-	tokenTTL time.Duration
-	cfg      appConfig
-	jobMu    sync.Mutex
-	jobs     map[string]*asyncOperateJob
+	db              *sql.DB
+	tokenTTL        time.Duration
+	cfg             appConfig
+	jobMu           sync.Mutex
+	jobs            map[string]*asyncOperateJob
+	projectSessions *projectSessionManager
 }
 
 type apiError struct {
@@ -61,6 +63,7 @@ type loginResp struct {
 	ExpireAt             string `json:"expire_at"`
 	DefaultPwd           bool   `json:"default_pwd"`
 	ProjectCacheTTLInSec int    `json:"project_cache_ttl_seconds"`
+	SessionIdleTTLInSec  int    `json:"session_idle_ttl_seconds"`
 }
 
 type changePasswordReq struct {
@@ -126,10 +129,11 @@ func Run() {
 	}
 
 	srv := &server{
-		db:       db,
-		tokenTTL: 24 * time.Hour,
-		cfg:      cfg,
-		jobs:     make(map[string]*asyncOperateJob),
+		db:              db,
+		tokenTTL:        24 * time.Hour,
+		cfg:             cfg,
+		jobs:            make(map[string]*asyncOperateJob),
+		projectSessions: newProjectSessionManager(),
 	}
 
 	addr := os.Getenv("ADDR")

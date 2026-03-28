@@ -1,6 +1,6 @@
 # 运维集成管理后台系统
 
-一个面向企业内网运维场景的前后端分离系统，聚合 AD 管理、打印管理、VPN 管理，并提供统一登录、项目凭据隔离、异步执行进度与操作审计能力。
+一个面向企业内网运维场景的前后端分离系统，整合 AD、打印、VPN 三类项目管理能力，提供统一登录、项目凭据隔离、项目会话复用、异步任务执行、缓存倒计时重登与操作日志审计。
 
 # 一、项目特性
 
@@ -9,9 +9,13 @@
 - 多项目聚合：AD / 打印 / VPN 功能统一入口
 - 用户级凭据隔离：每个管理员独立维护项目账号密码
 - 凭据加密存储：数据库中项目密码按密钥加密
+- 项目会话复用：首次进入项目后建立会话，后续操作默认复用，不会每次操作都重新登录
 - 异步执行机制：任务提交后轮询进度，支持日志逐条输出
 - 可审计日志：登录、项目加载、项目操作全链路记录
 - 缓存倒计时与自动重登：避免会话长期失效造成突发报错
+- 多窗口倒计时同步：同一浏览器同一 Token 下共享项目缓存倒计时
+- 页面关闭超时控制：页面关闭超过设定时长后重新访问需重新登录，并联动清理后端 Token 与项目会话
+- 会话状态可视化：页面可直接看到项目当前处于首次登录、复用会话还是倒计时重登
 
 # 二、技术栈
 
@@ -50,21 +54,39 @@ ops-integrated-admin-console
 │  └─ internal
 │     ├─ runtime
 │     │  ├─ bootstrap.go
+│     │  ├─ common.go
 │     │  ├─ config.go
 │     │  ├─ db.go
 │     │  ├─ handlers.go
 │     │  ├─ async_jobs.go
-│     │  └─ project_bridge.go
+│     │  ├─ auth_sessions.go
+│     │  ├─ project_bridge.go
+│     │  └─ session_manager.go
 │     └─ project
 │        ├─ common.go
 │        ├─ ad.go
 │        ├─ print.go
+│        ├─ session.go
 │        └─ vpn.go
 ├─ frontend
 │  ├─ index.html
+│  ├─ package.json
+│  ├─ vite.config.ts
 │  ├─ public
-│  │  └─ favicon.ico
+│  │  ├─ favicon.ico
+│  │  └─ vite.svg
 │  └─ src
+│     ├─ api
+│     ├─ components
+│     ├─ config
+│     ├─ layout
+│     ├─ router
+│     ├─ stores
+│     ├─ styles
+│     ├─ utils
+│     ├─ views
+│     ├─ App.vue
+│     └─ main.ts
 └─ README.md
 ```
 
@@ -82,7 +104,7 @@ ops-integrated-admin-console
 
 - 项目类型：`ad`、`print`、`vpn`、`vpn_firewall`
 - 每个管理员独立配置并隔离
-- 保存凭据后重置该项目加载状态，下一次进入会重新校验登录
+- 保存凭据后会清理该项目当前会话，下一次进入或执行操作时会重新校验登录
 - 凭据密码字段加密存储（`enc:v1:` 前缀）
 
 ## 3.3 AD 管理
@@ -119,21 +141,33 @@ ops-integrated-admin-console
 - 支持分页查询
 - 支持每页条数：`20 / 30 / 50 / 100 / 200`
 
+## 3.7 会话状态可视化
+
+- 项目页面提供会话状态日志，便于观察当前项目会话是否已建立或被重登
+- 支持展示 `首次登录 / 复用会话 / 倒计时重登` 三种状态
+- 保存项目凭据后会记录“项目会话已清理”，提示下次进入项目时重新登录
+
 # 四、运行机制
 
 ## 4.1 项目加载机制
 
 - 首次点击 AD/打印/VPN 菜单时，触发 `/api/projects/{project}/load`
 - 后端使用当前管理员保存的项目凭据执行登录验证
-- 校验通过后写入项目加载状态缓存
-- 同一会话下再次进入该项目可直接使用
+- 校验通过后在当前系统 Token 下建立该项目会话缓存
+- 同一 Token 下再次进入该项目或执行项目操作时，会优先复用现有会话，而不是每次操作都重新登录
+- 当项目凭据被修改，或缓存倒计时到期后触发重登时，会先清理旧会话再重新建立
 
 ## 4.2 缓存倒计时机制
 
 - 倒计时时长由后端 `PROJECT_CACHE_TTL_MINUTES` 控制
 - 前端页面右上角显示剩余时间
-- 倒计时归零时，前端静默调用 `/api/projects/relogin` 重登已配置项目
+- 倒计时以“当前系统 Token 对应的项目会话”作为作用范围
+- 同一浏览器下如果同账号同 Token 打开多个窗口或标签页，会通过本地存储共享同一倒计时
+- 倒计时归零时，前端静默调用 `/api/projects/relogin`，清理当前 Token 下的项目会话并重新登录已使用过的项目
+- 项目重登录接口会返回 `session_state=countdown_relogin`，前端可据此展示“倒计时重登”状态日志
+- 前端使用本地锁避免多个窗口在同一时刻重复触发重登
 - 输入框聚焦、项目加载中、任务执行中时会暂停倒计时
+- 页面关闭时会记录关闭时间；超过 `SESSION_IDLE_TTL_MINUTES` 再打开时，会要求重新登录，并调用 `/api/auth/logout` 清理该账号全部 Token 及对应项目会话缓存
 
 ## 4.3 异步执行机制
 
@@ -149,7 +183,7 @@ ops-integrated-admin-console
 
 | 组件 | 最低要求 | 推荐版本 | 说明 |
 | --- | --- | --- | --- |
-| Go | 1.26+ | 1.26.x | 后端 `go.mod` 当前声明为 `go 1.26` |
+| Go | 1.24+ | 1.26.x | 后端 `go.mod` 当前声明为 `go 1.26` |
 | Node.js | 18+ | 20 LTS | 用于前端开发与构建 |
 | npm | 9+ | 10+ | 与 Node.js 版本配套使用 |
 | Git | - | 最新稳定版 | 用于代码拉取与发布 |
@@ -195,7 +229,8 @@ FIREWALL_SSH_ADDR=firewall.example.internal
 
 # 后端运行参数
 ADDR=127.0.0.1:8080
-PROJECT_CACHE_TTL_MINUTES=15
+PROJECT_CACHE_TTL_MINUTES=10
+SESSION_IDLE_TTL_MINUTES=60
 
 # 凭据加密主密钥（建议不少于 16 位，生产环境请替换）
 CREDENTIAL_SECRET=change-this-to-your-own-secret-key
@@ -203,6 +238,21 @@ CREDENTIAL_SECRET=change-this-to-your-own-secret-key
 # 可选：历史密钥回退列表（用于密钥轮换兼容，多个用英文逗号分隔）
 CREDENTIAL_SECRET_FALLBACKS=change-me-ops-credential-secret
 ```
+
+环境变量说明：
+
+| 参数 | 说明 | 默认值 / 示例 |
+| --- | --- | --- |
+| `AD_API_URL` | AD 项目后端接口基础地址，用于拼接 AD 相关请求 | 默认 `http://ad.example.internal/` |
+| `PRINT_API_URL` | 打印项目后端接口基础地址，用于拼接打印管理请求 | 默认 `http://print.example.internal/printhub/` |
+| `VPN_SSH_ADDR` | VPN 系统 SSH 登录地址 | 默认 `vpn.example.internal` |
+| `FIREWALL_SSH_ADDR` | 防火墙系统 SSH 登录地址，VPN 联动删除时会使用 | 默认 `firewall.example.internal` |
+| `ADDR` | 后端 HTTP 服务监听地址 | 默认 `:8080` |
+| `PROJECT_CACHE_TTL_MINUTES` | 项目会话缓存倒计时时长，超过后前端会静默触发项目重登录 | 默认 `10` |
+| `SESSION_IDLE_TTL_MINUTES` | 浏览器页面关闭后的空闲超时时长；超过后重新打开页面会要求重新登录 | 默认 `60` |
+| `CREDENTIAL_SECRET` | 项目凭据加密主密钥，用于加解密数据库中的项目密码 | 无安全默认值，生产环境请务必自定义高强度随机字符串 |
+| `CREDENTIAL_SECRET_FALLBACKS` | 历史密钥回退列表，用于密钥轮换后兼容解密旧数据，多个值用英文逗号分隔 | 示例 `old-key-1,old-key-2` |
+
 3. 运行后端服务： 
 ```bash
 # 方式1：前台运行（终端关闭则服务停止）
@@ -279,6 +329,7 @@ FIREWALL_SSH_ADDR=firewall.example.internal
 # 后端运行参数
 ADDR=127.0.0.1:8080
 PROJECT_CACHE_TTL_MINUTES=15
+SESSION_IDLE_TTL_MINUTES=60
 
 # 凭据加密主密钥（建议不少于 16 位，生产环境请替换）
 CREDENTIAL_SECRET=change-this-to-your-own-secret-key
@@ -503,24 +554,27 @@ systemctl reload nginx
 | 健康检查 | GET | `/api/health` | 否 | 兼容前缀形式的健康检查 |
 | 认证 | POST | `/api/auth/login` | 否 | 管理员登录 |
 | 认证 | POST | `/api/auth/register` | 否 | 管理员注册 |
-| 认证 | GET | `/api/auth/me` | 是 | 获取当前登录信息与缓存 TTL |
+| 认证 | GET | `/api/auth/me` | 是 | 获取当前登录信息、项目缓存 TTL 与页面关闭超时 TTL |
+| 认证 | POST | `/api/auth/logout` | 是 | 退出登录，并清理该账号全部 Token 与对应项目会话缓存 |
 | 认证 | POST | `/api/auth/change-password` | 是 | 修改管理员密码 |
 | 项目凭据 | GET | `/api/projects/credentials` | 是 | 获取当前管理员项目凭据 |
 | 项目凭据 | PUT | `/api/projects/credentials/{project_type}` | 是 | 保存项目凭据（`ad/print/vpn/vpn_firewall`） |
-| 项目加载 | POST | `/api/projects/{project}/load` | 是 | 首次加载项目并校验登录 |
+| 项目加载 | POST | `/api/projects/{project}/load` | 是 | 进入项目并建立或复用会话，返回 `session_state` |
 | AD 批量模板 | GET | `/api/projects/ad/batch-template` | 是 | 下载 AD 批量创建模板 |
 | AD 批量上传 | POST | `/api/projects/ad/batch-upload` | 是 | 上传 AD 批量文件（`multipart/form-data`） |
 | AD 批量文件列表 | GET | `/api/projects/ad/batch-files` | 是 | 查询已上传批量文件 |
-| 项目操作（同步） | POST | `/api/projects/{project}/operate` | 是 | 同步执行项目操作 |
+| 项目操作（同步） | POST | `/api/projects/{project}/operate` | 是 | 基于当前项目会话执行操作，必要时返回 `session_state` |
 | 项目操作（异步） | POST | `/api/projects/operate-async` | 是 | 创建异步任务 |
 | 异步任务查询 | GET | `/api/projects/operate-async/{job_id}` | 是 | 查询异步执行进度与结果 |
-| 项目重登录 | POST | `/api/projects/relogin` | 是 | 清理缓存并重新登录项目 |
+| 项目重登录 | POST | `/api/projects/relogin` | 是 | 清理当前 Token 下项目会话并静默重登，返回 `session_state=countdown_relogin` |
 | 操作日志 | GET | `/api/logs` | 是 | 分页查询操作日志 |
 
 ## 8.2 鉴权说明
 
 - 除健康检查与登录/注册外，其余接口均需携带：`Authorization: Bearer <token>`。
 - 登录成功后返回 `token` 与 `expire_at`，前端据此维护登录态。
+- `/api/auth/me` 同时返回 `project_cache_ttl_seconds` 与 `session_idle_ttl_seconds`，前端分别用于缓存倒计时与页面关闭超时判断。
+- 项目加载、项目操作、项目重登录接口会返回 `session_state`，当前可见值包括：`first_login`、`reused`、`countdown_relogin`。
 
 ## 8.3 项目操作 Action 归类
 
@@ -606,8 +660,8 @@ systemctl reload nginx
   - `admins`
   - `auth_tokens`
   - `project_credentials`
-  - `project_load_state`
   - `operation_logs`
+- `project_load_state` 已废弃，旧版本数据库启动时会自动删除该表
 
 
 # 十、常见问题
@@ -633,6 +687,30 @@ systemctl reload nginx
 
 - 原因：文件编码不是 UTF-8 或终端/编辑器使用了错误编码
 - 处理：统一使用 UTF-8 编码保存与查看
+
+## 10.5 登录进入项目后，为什么不是每次操作都重新登录
+
+- 当前实现按“系统 Token + 项目类型”复用项目会话
+- 只要项目凭据未变更且未超过 `PROJECT_CACHE_TTL_MINUTES`，后续操作会直接复用现有会话
+- 只有首次进入、凭据更新后再次进入，或倒计时到期触发静默重登时，才会重新登录项目
+
+## 10.6 关闭页面超过 1 小时后重新打开会发生什么
+
+- 前端会在页面关闭时记录关闭时间
+- 当再次访问时，如果超过 `SESSION_IDLE_TTL_MINUTES`，会先回到登录页
+- 同时前端会尝试调用 `/api/auth/logout`，清理该账号在后端保存的全部 Token 与对应项目会话缓存
+
+## 10.7 同账号打开多个窗口时，缓存倒计时以谁为准
+
+- 同一浏览器下、同一账号且同一 Token 的多个窗口或标签页，共享同一份项目缓存倒计时
+- 任一窗口触发倒计时重登后，其它窗口会同步新的倒计时与会话状态
+- 不同浏览器、无痕窗口，或重新登录后生成的新 Token，则各自独立计算
+
+## 10.8 清理浏览器 Cookie / 网站数据后，后端 Token 会立即清掉吗
+
+- 前端本地登录态会立即失效，重新访问时会回到登录页
+- 但如果浏览器本地数据已被直接清空，前端通常拿不到旧 Token，因此无法再主动调用 `/api/auth/logout`
+- 这类情况下，后端 `auth_tokens` 记录不会立刻被前端主动删除；而对应项目会话缓存也不会因为“清浏览器数据”这个动作被即时通知清理
 
 # 十一、安全建议
 

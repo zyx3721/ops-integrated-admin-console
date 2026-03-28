@@ -38,14 +38,6 @@ func initDB(db *sql.DB, cfg appConfig) error {
 			UNIQUE(user_id, project_type),
 			FOREIGN KEY(user_id) REFERENCES admins(id)
 		);`,
-		`CREATE TABLE IF NOT EXISTS project_load_state (
-			user_id INTEGER NOT NULL,
-			project_type TEXT NOT NULL,
-			loaded INTEGER NOT NULL DEFAULT 0,
-			loaded_at TEXT NOT NULL,
-			PRIMARY KEY(user_id, project_type),
-			FOREIGN KEY(user_id) REFERENCES admins(id)
-		);`,
 		`CREATE TABLE IF NOT EXISTS operation_logs (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			user_id INTEGER,
@@ -66,6 +58,12 @@ func initDB(db *sql.DB, cfg appConfig) error {
 	if err = migrateProjectCredentialsSchema(db); err != nil {
 		return err
 	}
+	if err = migrateAuthTokensSchema(db); err != nil {
+		return err
+	}
+	if err = dropLegacyProjectLoadStateTable(db); err != nil {
+		return err
+	}
 	if err = ensureDefaultProjectCredentialsForAllUsers(db); err != nil {
 		return err
 	}
@@ -73,6 +71,48 @@ func initDB(db *sql.DB, cfg appConfig) error {
 		return err
 	}
 	return nil
+}
+
+func migrateAuthTokensSchema(db *sql.DB) error {
+	hasLastSeen, err := tableHasColumn(db, "auth_tokens", "last_seen_at")
+	if err != nil {
+		return err
+	}
+	if !hasLastSeen {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err = tx.Exec(`CREATE TABLE IF NOT EXISTS auth_tokens_new (
+		token TEXT PRIMARY KEY,
+		user_id INTEGER NOT NULL,
+		expires_at TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		FOREIGN KEY(user_id) REFERENCES admins(id)
+	);`); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`INSERT INTO auth_tokens_new(token,user_id,expires_at,created_at)
+		SELECT token,user_id,expires_at,created_at FROM auth_tokens`); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DROP TABLE auth_tokens`); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`ALTER TABLE auth_tokens_new RENAME TO auth_tokens`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func dropLegacyProjectLoadStateTable(db *sql.DB) error {
+	_, err := db.Exec(`DROP TABLE IF EXISTS project_load_state`)
+	return err
 }
 
 func migrateProjectCredentialsSchema(db *sql.DB) error {

@@ -175,7 +175,12 @@ async function onLogin() {
     throw new Error(data.error || '登录失败')
   }
   persistRememberedLogin(rememberMe.value, loginUsername.value.trim(), loginPassword.value)
-  auth.setSession(data.token, data.username, String(data.expire_at || ''))
+  auth.setSession(
+    data.token,
+    data.username,
+    String(data.expire_at || ''),
+    Number(data.session_idle_ttl_seconds || 3600),
+  )
   if (data.default_pwd) {
     message.warning('当前仍是默认密码，建议登录后尽快修改')
   }

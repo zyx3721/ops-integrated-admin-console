@@ -233,6 +233,23 @@
             </n-layout>
           </n-layout>
 
+          <div v-if="isProjectView" class="session-visual session-visual--bottom">
+            <div class="session-visual__summary">
+              <span class="session-visual__title">{{ credentialTitle(activeView) }}会话</span>
+              <span class="session-state-badge" :class="`session-state-badge--${currentProjectSessionState.state}`">
+                {{ currentProjectSessionState.label }}
+              </span>
+              <span class="session-visual__time">最近更新：{{ currentProjectSessionState.updatedAt || '--' }}</span>
+            </div>
+            <div v-if="currentProjectSessionLogs.length" class="session-visual__logs">
+              <div v-for="item in currentProjectSessionLogs" :key="item.id" class="session-log-item">
+                <span class="session-log-item__time">{{ item.time }}</span>
+                <span class="session-log-item__text">{{ item.text }}</span>
+              </div>
+            </div>
+            <div v-else class="session-visual__empty">暂无会话事件</div>
+          </div>
+
           <n-card v-if="activeView === 'logs'" title="操作日志" size="small">
             <div class="logs-toolbar">
               <n-button size="small" @click="loadLogs(logPage, logPageSize)">刷新日志</n-button>
@@ -332,7 +349,7 @@ import {
   NDrawerContent,
   useMessage,
 } from 'naive-ui'
-import { useAuthStore } from '@/stores/auth'
+import { getProjectCacheDeadlineKey, getProjectCacheReloginLockKey, useAuthStore } from '@/stores/auth'
 import { apiRequest, isAuthExpiredError } from '@/api/client'
 import { AD_ORG_UNIT_VALUES } from '@/config/ad'
 import {
@@ -373,6 +390,20 @@ type ActionForm = {
   resultItems: any[]
 }
 
+type ProjectSessionStateKey = 'idle' | 'first_login' | 'reused' | 'countdown_relogin'
+type ProjectSessionSnapshot = {
+  state: ProjectSessionStateKey
+  label: string
+  updatedAt: string
+}
+type ProjectSessionLog = {
+  id: number
+  project: string
+  state: ProjectSessionStateKey
+  text: string
+  time: string
+}
+
 const router = useRouter()
 const message = useMessage()
 const auth = useAuthStore()
@@ -401,12 +432,20 @@ const cacheTTLSeconds = ref(600)
 const cacheCountdownSeconds = ref(600)
 let cacheCountdownTimer: number | null = null
 let reloginInProgress = false
+const cacheReloginLockMs = 15 * 1000
 const projectFieldFocused = ref(false)
 const selectedAction = reactive<Record<string, string>>({
   ad: '',
   print: '',
   vpn: '',
 })
+const projectSessionStates = reactive<Record<string, ProjectSessionSnapshot>>({
+  ad: { state: 'idle', label: '未登录', updatedAt: '' },
+  print: { state: 'idle', label: '未登录', updatedAt: '' },
+  vpn: { state: 'idle', label: '未登录', updatedAt: '' },
+})
+const projectSessionLogs = ref<ProjectSessionLog[]>([])
+let projectSessionLogSeq = 0
 
 const menuOptions = [
   { label: '项目凭据', key: 'config' },
@@ -466,6 +505,53 @@ function credentialTitle(projectType: string): string {
   const key = String(projectType || '').trim()
   if (!key) return ''
   return credentialTypeTitleMap[key] || key.toUpperCase()
+}
+
+function projectSessionStateLabel(state: ProjectSessionStateKey): string {
+  if (state === 'first_login') return '首次登录'
+  if (state === 'reused') return '复用会话'
+  if (state === 'countdown_relogin') return '倒计时重登'
+  return '未登录'
+}
+
+function normalizeProjectSessionState(raw: any): ProjectSessionStateKey {
+  const state = String(raw || '').trim()
+  if (state === 'first_login' || state === 'reused' || state === 'countdown_relogin') {
+    return state
+  }
+  return 'idle'
+}
+
+function formatSessionEventTime(value = new Date()) {
+  return value.toLocaleTimeString('zh-CN', { hour12: false })
+}
+
+function pushProjectSessionLog(project: string, state: ProjectSessionStateKey, text: string) {
+  const key = String(project || '').trim()
+  if (!key || !projectSessionStates[key]) return
+  const now = new Date()
+  projectSessionStates[key] = {
+    state,
+    label: projectSessionStateLabel(state),
+    updatedAt: formatSessionEventTime(now),
+  }
+  projectSessionLogs.value.unshift({
+    id: ++projectSessionLogSeq,
+    project: key,
+    state,
+    text,
+    time: formatSessionEventTime(now),
+  })
+  if (projectSessionLogs.value.length > 24) {
+    projectSessionLogs.value = projectSessionLogs.value.slice(0, 24)
+  }
+}
+
+function resetProjectSessionVisuals() {
+  projectSessionStates.ad = { state: 'idle', label: '未登录', updatedAt: '' }
+  projectSessionStates.print = { state: 'idle', label: '未登录', updatedAt: '' }
+  projectSessionStates.vpn = { state: 'idle', label: '未登录', updatedAt: '' }
+  projectSessionLogs.value = []
 }
 
 function secureRandomInt(max: number): number {
@@ -662,6 +748,13 @@ const projectFunctionSelectOptions = computed(() =>
 const currentProjectForm = computed(() => {
   return currentProjectForms.value.find((f) => f.action === currentProjectAction.value) || currentProjectForms.value[0]
 })
+const currentProjectSessionState = computed<ProjectSessionSnapshot>(() => {
+  const key = activeView.value
+  return projectSessionStates[key] || { state: 'idle', label: '未登录', updatedAt: '' }
+})
+const currentProjectSessionLogs = computed(() =>
+  projectSessionLogs.value.filter((item) => item.project === activeView.value).slice(0, 6),
+)
 
 const adAddUserForm = computed(() => formMap.ad.find((x) => x.action === 'add_user'))
 const adResetPasswordForm = computed(() => formMap.ad.find((x) => x.action === 'reset_password'))
@@ -865,6 +958,7 @@ async function confirmPrintModify(form: ActionForm) {
         search_content: searchContent,
       },
     })
+    pushProjectSessionLog('print', normalizeProjectSessionState(res?.session_state), `打印项目会话已${projectSessionStateLabel(normalizeProjectSessionState(res?.session_state))}，已加载用户详情`)
     const item = res?.data?.item || {}
     form.model.name = String(item.name || '')
     form.model.fullname = String(item.fullname || '')
@@ -1054,8 +1148,84 @@ function isAnyProjectActionRunning(): boolean {
   })
 }
 
+function cacheDeadlineStorageKey() {
+  return getProjectCacheDeadlineKey(auth.token)
+}
+
+function cacheReloginLockStorageKey() {
+  return getProjectCacheReloginLockKey(auth.token)
+}
+
+function readSharedCacheDeadline(): number {
+  const key = cacheDeadlineStorageKey()
+  if (!key) return 0
+  const raw = Number(localStorage.getItem(key) || 0)
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return 0
+  }
+  return raw
+}
+
+function syncCacheCountdownFromDeadline() {
+  const deadline = readSharedCacheDeadline()
+  if (deadline <= 0) {
+    cacheCountdownSeconds.value = cacheTTLSeconds.value
+    return
+  }
+  cacheCountdownSeconds.value = Math.max(0, Math.ceil((deadline - Date.now()) / 1000))
+}
+
+function setSharedCacheDeadline(deadlineMs: number) {
+  const key = cacheDeadlineStorageKey()
+  if (!key) return
+  localStorage.setItem(key, String(deadlineMs))
+  syncCacheCountdownFromDeadline()
+}
+
+function ensureSharedCacheDeadline() {
+  if (!auth.token) return
+  const deadline = readSharedCacheDeadline()
+  if (deadline > 0) {
+    syncCacheCountdownFromDeadline()
+    return
+  }
+  setSharedCacheDeadline(Date.now() + cacheTTLSeconds.value * 1000)
+}
+
 function resetCacheCountdown() {
-  cacheCountdownSeconds.value = cacheTTLSeconds.value
+  if (!auth.token) {
+    cacheCountdownSeconds.value = cacheTTLSeconds.value
+    return
+  }
+  setSharedCacheDeadline(Date.now() + cacheTTLSeconds.value * 1000)
+}
+
+function acquireCacheReloginLock(): boolean {
+  const key = cacheReloginLockStorageKey()
+  if (!key) return false
+  const now = Date.now()
+  const current = Number(localStorage.getItem(key) || 0)
+  if (Number.isFinite(current) && current > now) {
+    return false
+  }
+  const next = now + cacheReloginLockMs
+  localStorage.setItem(key, String(next))
+  return Number(localStorage.getItem(key) || 0) === next
+}
+
+function releaseCacheReloginLock() {
+  const key = cacheReloginLockStorageKey()
+  if (!key) return
+  localStorage.removeItem(key)
+}
+
+function handleStorageSync(event: StorageEvent) {
+  if (!auth.token) return
+  const deadlineKey = cacheDeadlineStorageKey()
+  const reloginLockKey = cacheReloginLockStorageKey()
+  if (event.key === deadlineKey || event.key === reloginLockKey) {
+    syncCacheCountdownFromDeadline()
+  }
 }
 
 async function loadAuthMeta() {
@@ -1064,7 +1234,11 @@ async function loadAuthMeta() {
     const ttl = Number(data?.project_cache_ttl_seconds || 0)
     if (Number.isFinite(ttl) && ttl > 0) {
       cacheTTLSeconds.value = ttl
-      resetCacheCountdown()
+      ensureSharedCacheDeadline()
+    }
+    const idleTTL = Number(data?.session_idle_ttl_seconds || 0)
+    if (Number.isFinite(idleTTL) && idleTTL > 0) {
+      auth.setIdleTTL(idleTTL)
     }
   } catch (e) {
     // keep default TTL
@@ -1073,6 +1247,10 @@ async function loadAuthMeta() {
 
 async function reloginProjectsSilently() {
   if (reloginInProgress) return
+  if (!acquireCacheReloginLock()) {
+    syncCacheCountdownFromDeadline()
+    return
+  }
   reloginInProgress = true
   try {
     const data = await apiRequest('/api/projects/relogin', 'POST', {})
@@ -1083,6 +1261,8 @@ async function reloginProjectsSilently() {
       if (!key) continue
       if (item?.ok) {
         auth.markProjectLoaded(key)
+        const state = normalizeProjectSessionState(item?.session_state) || 'countdown_relogin'
+        pushProjectSessionLog(key, state, `${credentialTitle(key)}项目会话已完成倒计时重登`)
       }
     }
   } catch (e) {
@@ -1090,6 +1270,7 @@ async function reloginProjectsSilently() {
   } finally {
     reloginInProgress = false
     resetCacheCountdown()
+    releaseCacheReloginLock()
   }
 }
 
@@ -1099,10 +1280,10 @@ function startCacheCountdownTimer() {
   }
   cacheCountdownTimer = window.setInterval(async () => {
     if (!auth.token) return
+    syncCacheCountdownFromDeadline()
     if (projectFieldFocused.value) return
     if (loadingProject.value || isAnyProjectActionRunning()) return
     if (cacheCountdownSeconds.value > 0) {
-      cacheCountdownSeconds.value -= 1
       return
     }
     await reloginProjectsSilently()
@@ -1121,6 +1302,7 @@ async function saveCredential(item: any) {
       password: item.password,
     })
     auth.resetProjectLoaded(item.project_type)
+    pushProjectSessionLog(item.project_type, 'idle', `${credentialTitle(item.project_type)}凭据已更新，项目会话已清理`)
     message.success(`${credentialTitle(item.project_type)}凭据保存成功`)
   } catch (e: any) {
     handleRequestError(e)
@@ -1131,8 +1313,16 @@ async function ensureLoaded(project: string) {
   if (auth.loadedProjects[project]) return
   loadingProject.value = true
   try {
-    await apiRequest(`/api/projects/${project}/load`, 'POST', {})
+    const res = await apiRequest(`/api/projects/${project}/load`, 'POST', {})
     auth.markProjectLoaded(project)
+    const state = normalizeProjectSessionState(res?.session_state)
+    pushProjectSessionLog(
+      project,
+      state,
+      state === 'first_login'
+        ? `${credentialTitle(project)}项目首次登录完成`
+        : `${credentialTitle(project)}项目复用已有会话`,
+    )
   } finally {
     loadingProject.value = false
   }
@@ -1186,6 +1376,14 @@ async function runAsyncProjectAction(f: ActionForm, projectType: string, action:
     action,
     params,
   })
+  const state = normalizeProjectSessionState(start?.session_state)
+  pushProjectSessionLog(
+    projectType,
+    state,
+    state === 'first_login'
+      ? `${credentialTitle(projectType)}项目首次登录后开始执行操作`
+      : `${credentialTitle(projectType)}项目复用会话执行操作`,
+  )
   const jobID = String(start?.job_id || '').trim()
   if (!jobID) {
     throw new Error('创建异步任务失败')
@@ -1476,10 +1674,19 @@ async function changePassword() {
 }
 
 function logout() {
+  const token = auth.token
   if (cacheCountdownTimer !== null) {
     window.clearInterval(cacheCountdownTimer)
     cacheCountdownTimer = null
   }
+  if (token) {
+    fetch(`${auth.apiBase}/api/auth/logout`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      keepalive: true,
+    }).catch(() => undefined)
+  }
+  resetProjectSessionVisuals()
   auth.clearSession()
   router.push('/login')
 }
@@ -1488,7 +1695,7 @@ function ensureSessionAliveBeforeAction() {
   if (!auth.token) {
     return false
   }
-  if (auth.isSessionValid()) {
+  if (auth.ensureSession()) {
     return true
   }
   if (cacheCountdownTimer !== null) {
@@ -1507,10 +1714,17 @@ function handleVisibilityOrFocus() {
   ensureSessionAliveBeforeAction()
 }
 
+function handleWindowClose() {
+  auth.markWindowClosed()
+}
+
 onMounted(async () => {
   document.addEventListener('visibilitychange', handleVisibilityOrFocus)
   window.addEventListener('focus', handleVisibilityOrFocus)
+  window.addEventListener('beforeunload', handleWindowClose)
+  window.addEventListener('pagehide', handleWindowClose)
   window.addEventListener('resize', syncViewportState)
+  window.addEventListener('storage', handleStorageSync)
   syncViewportState()
   if (!ensureSessionAliveBeforeAction()) {
     return
@@ -1523,7 +1737,10 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', handleVisibilityOrFocus)
   window.removeEventListener('focus', handleVisibilityOrFocus)
+  window.removeEventListener('beforeunload', handleWindowClose)
+  window.removeEventListener('pagehide', handleWindowClose)
   window.removeEventListener('resize', syncViewportState)
+  window.removeEventListener('storage', handleStorageSync)
   if (cacheCountdownTimer !== null) {
     window.clearInterval(cacheCountdownTimer)
     cacheCountdownTimer = null
@@ -1759,6 +1976,98 @@ onBeforeUnmount(() => {
   background: #f2f8fe;
   border-radius: 999px;
   padding: 4px 10px;
+}
+
+.session-visual {
+  margin-bottom: 14px;
+  border: 1px solid #d4e3ef;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: 0 10px 28px rgba(19, 67, 107, 0.08);
+  padding: 12px 14px;
+}
+
+.session-visual--bottom {
+  margin-top: 14px;
+}
+
+.session-visual__summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.session-visual__title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1f4e76;
+}
+
+.session-visual__time {
+  font-size: 12px;
+  color: #5a7893;
+}
+
+.session-state-badge {
+  font-size: 12px;
+  border-radius: 999px;
+  padding: 4px 10px;
+  border: 1px solid #c8dceb;
+  background: #f3f8fd;
+  color: #325a79;
+}
+
+.session-state-badge--first_login {
+  border-color: #b9d7ef;
+  background: #e8f4fd;
+  color: #0f5a92;
+}
+
+.session-state-badge--reused {
+  border-color: #c7dfd8;
+  background: #edf8f4;
+  color: #16745e;
+}
+
+.session-state-badge--countdown_relogin {
+  border-color: #d8d0ee;
+  background: #f5f1fd;
+  color: #5b47a6;
+}
+
+.session-visual__logs {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.session-log-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #f7fbff;
+  border: 1px solid #deebf5;
+  font-size: 12px;
+}
+
+.session-log-item__time {
+  flex-shrink: 0;
+  color: #6b89a1;
+  min-width: 52px;
+}
+
+.session-log-item__text {
+  color: #2d5576;
+  line-height: 1.5;
+}
+
+.session-visual__empty {
+  margin-top: 10px;
+  color: #6f8aa1;
+  font-size: 12px;
 }
 
 .logs-toolbar {

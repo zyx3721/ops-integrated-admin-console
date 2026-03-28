@@ -36,6 +36,10 @@ func (s *server) route(w http.ResponseWriter, r *http.Request) {
 		s.requireAuth(s.handleMe)(w, r)
 		return
 	}
+	if r.URL.Path == "/api/auth/logout" && r.Method == http.MethodPost {
+		s.requireAuth(s.handleLogout)(w, r)
+		return
+	}
 	if r.URL.Path == "/api/auth/change-password" && r.Method == http.MethodPost {
 		s.requireAuth(s.handleChangePassword)(w, r)
 		return
@@ -115,7 +119,8 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	exp := time.Now().Add(s.tokenTTL)
-	if _, err = s.db.Exec(`INSERT INTO auth_tokens(token,user_id,expires_at,created_at) VALUES(?,?,?,?)`, token, userID, exp.Format(time.RFC3339), nowStr()); err != nil {
+	now := nowStr()
+	if _, err = s.db.Exec(`INSERT INTO auth_tokens(token,user_id,expires_at,created_at) VALUES(?,?,?,?)`, token, userID, exp.Format(time.RFC3339), now); err != nil {
 		writeJSON(w, http.StatusInternalServerError, apiError{Error: "创建登录会话失败"})
 		return
 	}
@@ -123,7 +128,6 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, apiError{Error: "初始化项目凭据失败"})
 		return
 	}
-	_ = s.clearProjectLoadState(userID)
 
 	s.logAction(userID, username, "login", "", "用户登录成功")
 	writeJSON(w, http.StatusOK, loginResp{
@@ -132,6 +136,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		ExpireAt:             exp.Format(time.RFC3339),
 		DefaultPwd:           false,
 		ProjectCacheTTLInSec: int(s.cfg.ProjectCacheTTL.Seconds()),
+		SessionIdleTTLInSec:  int(s.cfg.SessionIdleTTL.Seconds()),
 	})
 }
 
@@ -140,7 +145,14 @@ func (s *server) handleMe(w http.ResponseWriter, _ *http.Request, u authedUser) 
 		"id":                        u.ID,
 		"username":                  u.Username,
 		"project_cache_ttl_seconds": int(s.cfg.ProjectCacheTTL.Seconds()),
+		"session_idle_ttl_seconds":  int(s.cfg.SessionIdleTTL.Seconds()),
 	})
+}
+
+func (s *server) handleLogout(w http.ResponseWriter, _ *http.Request, u authedUser) {
+	s.cleanupUserAuthTokens(u.ID)
+	s.logAction(u.ID, u.Username, "logout", "", "管理员退出登录")
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *server) handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -280,10 +292,7 @@ func (s *server) handleProjectCredentialByType(w http.ResponseWriter, r *http.Re
 		writeJSON(w, http.StatusInternalServerError, apiError{Error: "更新项目凭据失败"})
 		return
 	}
-	if _, err = s.db.Exec(`DELETE FROM project_load_state WHERE user_id=? AND project_type=?`, u.ID, projectType); err != nil {
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: "重置项目加载状态失败"})
-		return
-	}
+	s.projectSessions.clearUserProject(u.ID, projectType)
 	s.logAction(u.ID, u.Username, "update_project_credential", projectType, "更新项目凭据")
 	writeJSON(w, http.StatusOK, map[string]string{"message": "更新成功"})
 }
@@ -323,39 +332,18 @@ func (s *server) handleProjectOps(w http.ResponseWriter, r *http.Request, u auth
 }
 
 func (s *server) handleProjectLoad(w http.ResponseWriter, u authedUser, projectType string) {
-	loaded, err := s.isProjectLoaded(u.ID, projectType)
+	_, didLogin, message, err := s.ensureProjectSession(u, projectType, false)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: "查询项目加载状态失败"})
+		s.logAction(u.ID, u.Username, "project_load_failed", projectType, truncate(err.Error(), 600))
+		writeJSON(w, http.StatusBadGateway, apiError{Error: err.Error()})
 		return
 	}
-	if loaded {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"loaded": true, "first_load": false})
-		return
-	}
-	account, password, err := s.getProjectCredential(u.ID, projectType)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, apiError{Error: err.Error()})
-		return
-	}
-	res, err := s.projectLogin(projectType, account, password)
-	if err != nil || !res.OK {
-		msg := res.Error
-		if msg == "" {
-			msg = res.Message
-		}
-		if msg == "" && err != nil {
-			msg = err.Error()
-		}
-		s.logAction(u.ID, u.Username, "project_load_failed", projectType, truncate(msg, 600))
-		writeJSON(w, http.StatusBadGateway, apiError{Error: msg})
-		return
-	}
-	if err = s.markProjectLoaded(u.ID, projectType); err != nil {
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: "更新项目加载状态失败"})
+	if !didLogin {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"loaded": true, "first_load": false, "session_state": "reused"})
 		return
 	}
 	s.logAction(u.ID, u.Username, "project_load", projectType, "首次加载完成")
-	writeJSON(w, http.StatusOK, map[string]interface{}{"loaded": true, "first_load": true, "message": res.Message})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"loaded": true, "first_load": true, "message": message, "session_state": "first_login"})
 }
 
 func (s *server) handleProjectBatchFiles(w http.ResponseWriter, projectType string) {
@@ -425,7 +413,7 @@ func (s *server) handleProjectBatchUpload(w http.ResponseWriter, r *http.Request
 
 	ext := strings.ToLower(filepath.Ext(header.Filename))
 	if ext != ".xlsx" && ext != ".xls" {
-		writeJSON(w, http.StatusBadRequest, apiError{Error: "仅支持上传xlsx/.xls文件"})
+		writeJSON(w, http.StatusBadRequest, apiError{Error: "仅支持上传 xlsx/.xls 文件"})
 		return
 	}
 
@@ -477,72 +465,55 @@ func (s *server) handleProjectOperate(w http.ResponseWriter, r *http.Request, u 
 			req.Params["__vpn_fw_password"] = fwPassword
 		}
 	}
-	account, password, err := s.getProjectCredential(u.ID, projectType)
+
+	entry, didLogin, _, err := s.ensureProjectSession(u, projectType, false)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, apiError{Error: err.Error()})
 		return
 	}
-	res, err := s.projectOperate(projectType, account, password, req.Action, req.Params)
+
+	result, err := s.operateWithProjectSession(entry, req.Action, req.Params)
 	if err != nil {
 		s.logAction(u.ID, u.Username, "project_operate_failed", projectType, fmt.Sprintf("action=%s, err=%v", req.Action, err))
 		writeJSON(w, http.StatusBadGateway, apiError{Error: err.Error()})
 		return
 	}
-	if !res.OK {
-		errMsg := res.Error
+	if !result.OK {
+		errMsg := result.Error
 		if errMsg == "" {
-			errMsg = res.Message
+			errMsg = result.Message
 		}
 		s.logAction(u.ID, u.Username, "project_operate_failed", projectType, fmt.Sprintf("action=%s, err=%s", req.Action, errMsg))
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"ok": false, "error": errMsg, "message": res.Message, "data": res.Data})
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"ok": false, "error": errMsg, "message": result.Message, "data": result.Data})
 		return
 	}
 	s.logAction(u.ID, u.Username, "project_operate", projectType, fmt.Sprintf("action=%s", req.Action))
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "message": res.Message, "data": res.Data})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "message": result.Message, "data": result.Data, "session_state": projectSessionStateFromDidLogin(didLogin)})
 }
 
 func (s *server) handleProjectsRelogin(w http.ResponseWriter, _ *http.Request, u authedUser) {
-	if err := s.clearProjectLoadState(u.ID); err != nil {
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: "清理项目缓存失败"})
-		return
-	}
-	items := make([]map[string]interface{}, 0, 3)
+	s.projectSessions.clearToken(u.Token)
+	reloginItems := make([]map[string]interface{}, 0, 3)
 	for _, projectType := range []string{"ad", "print", "vpn"} {
-		account, password, err := s.getProjectCredential(u.ID, projectType)
+		_, _, message, err := s.ensureProjectSession(u, projectType, true)
 		if err != nil {
-			items = append(items, map[string]interface{}{
+			reloginItems = append(reloginItems, map[string]interface{}{
 				"project_type": projectType,
 				"ok":           false,
 				"message":      err.Error(),
 			})
 			continue
 		}
-		res, loginErr := s.projectLogin(projectType, account, password)
-		if loginErr != nil || !res.OK {
-			msg := res.Error
-			if msg == "" {
-				msg = res.Message
-			}
-			if msg == "" && loginErr != nil {
-				msg = loginErr.Error()
-			}
-			items = append(items, map[string]interface{}{
-				"project_type": projectType,
-				"ok":           false,
-				"message":      msg,
-			})
-			continue
-		}
-		_ = s.markProjectLoaded(u.ID, projectType)
-		items = append(items, map[string]interface{}{
-			"project_type": projectType,
-			"ok":           true,
-			"message":      res.Message,
+		reloginItems = append(reloginItems, map[string]interface{}{
+			"project_type":  projectType,
+			"ok":            true,
+			"message":       message,
+			"session_state": "countdown_relogin",
 		})
 	}
 	s.logAction(u.ID, u.Username, "project_relogin", "", "手动触发项目重新登录")
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"items":           items,
+		"items":           reloginItems,
 		"next_cleanup_at": time.Now().Add(s.cfg.ProjectCacheTTL).Format(time.RFC3339),
 	})
 }
@@ -551,7 +522,6 @@ func (s *server) handleLogs(w http.ResponseWriter, r *http.Request, _ authedUser
 	page := 1
 	pageSize := 20
 
-	// Backward compatibility: if `limit` is provided, honor it as page_size on page 1.
 	if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
 		n, err := strconv.Atoi(v)
 		if err == nil && n > 0 && n <= 1000 {
@@ -639,37 +609,6 @@ func (s *server) getProjectCredential(userID int64, projectType string) (string,
 	return account, password, nil
 }
 
-func (s *server) isProjectLoaded(userID int64, projectType string) (bool, error) {
-	var loaded int
-	var loadedAt string
-	err := s.db.QueryRow(`SELECT loaded,loaded_at FROM project_load_state WHERE user_id=? AND project_type=?`, userID, projectType).Scan(&loaded, &loadedAt)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
-		}
-		return false, err
-	}
-	if loaded == 1 && s.cfg.ProjectCacheTTL > 0 {
-		if ts, parseErr := time.Parse(time.RFC3339, loadedAt); parseErr == nil {
-			if time.Since(ts) >= s.cfg.ProjectCacheTTL {
-				return false, nil
-			}
-		}
-	}
-	return loaded == 1, nil
-}
-
-func (s *server) markProjectLoaded(userID int64, projectType string) error {
-	_, err := s.db.Exec(`INSERT INTO project_load_state(user_id,project_type,loaded,loaded_at) VALUES(?,?,1,?)
-	ON CONFLICT(user_id,project_type) DO UPDATE SET loaded=1,loaded_at=excluded.loaded_at`, userID, projectType, nowStr())
-	return err
-}
-
-func (s *server) clearProjectLoadState(userID int64) error {
-	_, err := s.db.Exec(`DELETE FROM project_load_state WHERE user_id=?`, userID)
-	return err
-}
-
 func (s *server) requireAuth(next func(http.ResponseWriter, *http.Request, authedUser)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := extractBearerToken(r.Header.Get("Authorization"))
@@ -678,8 +617,7 @@ func (s *server) requireAuth(next func(http.ResponseWriter, *http.Request, authe
 			return
 		}
 		now := time.Now().Format(time.RFC3339)
-		var u authedUser
-		err := s.db.QueryRow(`SELECT a.id,a.username,t.token FROM auth_tokens t JOIN admins a ON a.id=t.user_id WHERE t.token=? AND t.expires_at>?`, token, now).Scan(&u.ID, &u.Username, &u.Token)
+		u, err := s.loadAuthedUser(token, now)
 		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, apiError{Error: "令牌无效或已过期"})
 			return

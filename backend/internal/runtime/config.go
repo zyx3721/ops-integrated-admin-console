@@ -48,13 +48,18 @@ func loadAppConfig() appConfig {
 	if ttlMinutes <= 0 {
 		ttlMinutes = 10
 	}
+	idleMinutes := envInt("SESSION_IDLE_TTL_MINUTES", 60)
+	if idleMinutes <= 0 {
+		idleMinutes = 60
+	}
 	return appConfig{
-		ADAPIURL:        normalizeBaseURL(envString("AD_API_URL", "http://10.22.50.248/")),
-		PrintAPIURL:     normalizeBaseURL(envString("PRINT_API_URL", "http://printhub.sunline.cn/printhub/")),
-		VPNSshAddr:      strings.TrimSpace(envString("VPN_SSH_ADDR", "100.100.100.7")),
-		FirewallSSHAddr: strings.TrimSpace(envString("FIREWALL_SSH_ADDR", "100.100.100.2")),
+		ADAPIURL:        normalizeBaseURL(envString("AD_API_URL", "http://ad.example.internal/")),
+		PrintAPIURL:     normalizeBaseURL(envString("PRINT_API_URL", "http://print.example.internal/printhub/")),
+		VPNSshAddr:      strings.TrimSpace(envString("VPN_SSH_ADDR", "vpn.example.internal")),
+		FirewallSSHAddr: strings.TrimSpace(envString("FIREWALL_SSH_ADDR", "firewall.example.internal")),
 		CredentialKey:   envString("CREDENTIAL_SECRET", "change-me-ops-credential-secret"),
 		ProjectCacheTTL: time.Duration(ttlMinutes) * time.Minute,
+		SessionIdleTTL:  time.Duration(idleMinutes) * time.Minute,
 	}
 }
 
