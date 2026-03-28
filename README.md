@@ -249,7 +249,7 @@ CREDENTIAL_SECRET_FALLBACKS=change-me-ops-credential-secret
 | `FIREWALL_SSH_ADDR` | 防火墙系统 SSH 登录地址，VPN 联动删除时会使用 | 默认 `firewall.example.internal` |
 | `ADDR` | 后端 HTTP 服务监听地址 | 默认 `:8080` |
 | `PROJECT_CACHE_TTL_MINUTES` | 项目会话缓存倒计时时长，超过后前端会静默触发项目重登录 | 默认 `10` |
-| `SESSION_IDLE_TTL_MINUTES` | 浏览器页面关闭后的空闲超时时长；超过后重新打开页面会要求重新登录 | 默认 `60` |
+| `SESSION_IDLE_TTL_MINUTES` | 浏览器页面关闭后的空闲超时时长；超过后重新打开页面会要求重新登录。若页面关闭后中途修改该值并重启后端，本次关闭周期通常仍按浏览器里原先保存的旧值判断，下次重新登录后才会按新值生效 | 默认 `60` |
 | `CREDENTIAL_SECRET` | 项目凭据加密主密钥，用于加解密数据库中的项目密码 | 无安全默认值，生产环境请务必自定义高强度随机字符串 |
 | `CREDENTIAL_SECRET_FALLBACKS` | 历史密钥回退列表，用于密钥轮换后兼容解密旧数据，多个值用英文逗号分隔 | 示例 `old-key-1,old-key-2` |
 
@@ -698,6 +698,9 @@ systemctl reload nginx
 
 - 前端会在页面关闭时记录关闭时间
 - 当再次访问时，如果超过 `SESSION_IDLE_TTL_MINUTES`，会先回到登录页
+- 这里比较的是“当前时间 - 页面关闭时间”与浏览器本地保存的超时阈值，不是后端实时回查
+- 如果页面关闭后还没超时，您中途修改了 `SESSION_IDLE_TTL_MINUTES` 并重启后端，那么这一次关闭周期通常仍按旧值判断
+- 等这一次因旧值超时而回到登录页后，重新登录时会从后端读取新的 `session_idle_ttl_seconds`，之后下一轮页面关闭超时才会按新值生效
 - 同时前端会尝试调用 `/api/auth/logout`，清理该账号在后端保存的全部 Token 与对应项目会话缓存
 
 ## 10.7 同账号打开多个窗口时，缓存倒计时以谁为准
