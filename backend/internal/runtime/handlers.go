@@ -163,9 +163,7 @@ func (s *server) handleWindowCloseStart(w http.ResponseWriter, r *http.Request, 
 		writeJSON(w, http.StatusBadRequest, apiError{Error: "请求体格式错误"})
 		return
 	}
-	detail := formatBrowserCloseEventDetail("检测到浏览器最后一个系统页面已关闭，开始计时", req)
-	s.logAction(u.ID, u.Username, "browser_close_timer_started", "", detail)
-	fmt.Printf("[browser-close] user=%s detail=%s\n", u.Username, detail)
+	s.scheduleBrowserCloseStartLog(u, req)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -173,6 +171,10 @@ func (s *server) handleWindowCloseCancel(w http.ResponseWriter, r *http.Request,
 	var req browserCloseEventReq
 	if err := decodeOptionalJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, apiError{Error: "请求体格式错误"})
+		return
+	}
+	if s.cancelPendingBrowserCloseStartLog(u.Token) {
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		return
 	}
 	detail := formatBrowserCloseCancelDetail(req)
@@ -187,6 +189,7 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request, u authedUs
 		writeJSON(w, http.StatusBadRequest, apiError{Error: "请求体格式错误"})
 		return
 	}
+	s.cancelPendingBrowserCloseStartLog(u.Token)
 	s.cleanupUserAuthTokens(u.ID)
 	if strings.TrimSpace(req.Reason) == "reopen_timeout" {
 		detail := formatBrowserCloseEventDetail("页面关闭超时，已清理该账号全部 Token 与项目会话缓存", req)
@@ -672,6 +675,68 @@ func (s *server) requireAuth(next func(http.ResponseWriter, *http.Request, authe
 func (s *server) logAction(userID int64, username, action, projectType, detail string) {
 	detail = normalizeGarbledText(detail)
 	_, _ = s.db.Exec(`INSERT INTO operation_logs(user_id,username,action,project_type,detail,created_at) VALUES(?,?,?,?,?,?)`, userID, username, action, projectType, detail, nowStr())
+}
+
+func (s *server) scheduleBrowserCloseStartLog(u authedUser, req browserCloseEventReq) {
+	token := strings.TrimSpace(u.Token)
+	if token == "" {
+		detail := formatBrowserCloseEventDetail("检测到浏览器最后一个系统页面已关闭，开始计时", req)
+		s.logAction(u.ID, u.Username, "browser_close_timer_started", "", detail)
+		fmt.Printf("[browser-close] user=%s detail=%s\n", u.Username, detail)
+		return
+	}
+
+	entry := pendingBrowserCloseLog{
+		user: u,
+		req:  req,
+	}
+
+	s.browserCloseLogMu.Lock()
+	s.pendingBrowserCloseLogs[token] = &entry
+	s.browserCloseLogMu.Unlock()
+
+	expectedClosedAtMS := req.ClosedAtMS
+	time.AfterFunc(browserCloseLogGracePeriod, func() {
+		s.flushPendingBrowserCloseStartLog(token, expectedClosedAtMS)
+	})
+}
+
+func (s *server) flushPendingBrowserCloseStartLog(token string, expectedClosedAtMS int64) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return
+	}
+
+	s.browserCloseLogMu.Lock()
+	entry, ok := s.pendingBrowserCloseLogs[token]
+	if ok && entry != nil && entry.req.ClosedAtMS == expectedClosedAtMS {
+		delete(s.pendingBrowserCloseLogs, token)
+	} else {
+		ok = false
+	}
+	s.browserCloseLogMu.Unlock()
+	if !ok || entry == nil {
+		return
+	}
+
+	detail := formatBrowserCloseEventDetail("检测到浏览器最后一个系统页面已关闭，开始计时", entry.req)
+	s.logAction(entry.user.ID, entry.user.Username, "browser_close_timer_started", "", detail)
+	fmt.Printf("[browser-close] user=%s detail=%s\n", entry.user.Username, detail)
+}
+
+func (s *server) cancelPendingBrowserCloseStartLog(token string) bool {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return false
+	}
+
+	s.browserCloseLogMu.Lock()
+	defer s.browserCloseLogMu.Unlock()
+	if _, ok := s.pendingBrowserCloseLogs[token]; !ok {
+		return false
+	}
+	delete(s.pendingBrowserCloseLogs, token)
+	return true
 }
 
 func formatBrowserCloseEventDetail(prefix string, req browserCloseEventReq) string {

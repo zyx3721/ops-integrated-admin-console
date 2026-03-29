@@ -35,12 +35,14 @@ type appConfig struct {
 }
 
 type server struct {
-	db              *sql.DB
-	tokenTTL        time.Duration
-	cfg             appConfig
-	jobMu           sync.Mutex
-	jobs            map[string]*asyncOperateJob
-	projectSessions *projectSessionManager
+	db                      *sql.DB
+	tokenTTL                time.Duration
+	cfg                     appConfig
+	jobMu                   sync.Mutex
+	jobs                    map[string]*asyncOperateJob
+	projectSessions         *projectSessionManager
+	browserCloseLogMu       sync.Mutex
+	pendingBrowserCloseLogs map[string]*pendingBrowserCloseLog
 }
 
 type apiError struct {
@@ -101,9 +103,15 @@ type logRow struct {
 	CreatedAt   string `json:"created_at"`
 }
 
+type pendingBrowserCloseLog struct {
+	user authedUser
+	req  browserCloseEventReq
+}
+
 var runtimeCfg appConfig
 
 const credentialCipherPrefix = "enc:v1:"
+const browserCloseLogGracePeriod = 3 * time.Second
 
 func Run() {
 	loadEnvFiles(".env", "../.env")
@@ -137,11 +145,12 @@ func Run() {
 	}
 
 	srv := &server{
-		db:              db,
-		tokenTTL:        24 * time.Hour,
-		cfg:             cfg,
-		jobs:            make(map[string]*asyncOperateJob),
-		projectSessions: newProjectSessionManager(),
+		db:                      db,
+		tokenTTL:                24 * time.Hour,
+		cfg:                     cfg,
+		jobs:                    make(map[string]*asyncOperateJob),
+		projectSessions:         newProjectSessionManager(),
+		pendingBrowserCloseLogs: make(map[string]*pendingBrowserCloseLog),
 	}
 
 	addr := os.Getenv("ADDR")
