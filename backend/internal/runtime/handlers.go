@@ -36,6 +36,14 @@ func (s *server) route(w http.ResponseWriter, r *http.Request) {
 		s.requireAuth(s.handleMe)(w, r)
 		return
 	}
+	if r.URL.Path == "/api/auth/window-close-start" && r.Method == http.MethodPost {
+		s.requireAuth(s.handleWindowCloseStart)(w, r)
+		return
+	}
+	if r.URL.Path == "/api/auth/window-close-cancel" && r.Method == http.MethodPost {
+		s.requireAuth(s.handleWindowCloseCancel)(w, r)
+		return
+	}
 	if r.URL.Path == "/api/auth/logout" && r.Method == http.MethodPost {
 		s.requireAuth(s.handleLogout)(w, r)
 		return
@@ -149,9 +157,44 @@ func (s *server) handleMe(w http.ResponseWriter, _ *http.Request, u authedUser) 
 	})
 }
 
-func (s *server) handleLogout(w http.ResponseWriter, _ *http.Request, u authedUser) {
+func (s *server) handleWindowCloseStart(w http.ResponseWriter, r *http.Request, u authedUser) {
+	var req browserCloseEventReq
+	if err := decodeOptionalJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiError{Error: "请求体格式错误"})
+		return
+	}
+	detail := formatBrowserCloseEventDetail("检测到浏览器最后一个系统页面已关闭，开始计时", req)
+	s.logAction(u.ID, u.Username, "browser_close_timer_started", "", detail)
+	fmt.Printf("[browser-close] user=%s detail=%s\n", u.Username, detail)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *server) handleWindowCloseCancel(w http.ResponseWriter, r *http.Request, u authedUser) {
+	var req browserCloseEventReq
+	if err := decodeOptionalJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiError{Error: "请求体格式错误"})
+		return
+	}
+	detail := formatBrowserCloseCancelDetail(req)
+	s.logAction(u.ID, u.Username, "browser_close_timer_canceled", "", detail)
+	fmt.Printf("[browser-close-cancel] user=%s detail=%s\n", u.Username, detail)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *server) handleLogout(w http.ResponseWriter, r *http.Request, u authedUser) {
+	var req browserCloseEventReq
+	if err := decodeOptionalJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiError{Error: "请求体格式错误"})
+		return
+	}
 	s.cleanupUserAuthTokens(u.ID)
-	s.logAction(u.ID, u.Username, "logout", "", "管理员退出登录")
+	if strings.TrimSpace(req.Reason) == "reopen_timeout" {
+		detail := formatBrowserCloseEventDetail("页面关闭超时，已清理该账号全部 Token 与项目会话缓存", req)
+		s.logAction(u.ID, u.Username, "logout", "", detail)
+		fmt.Printf("[browser-close-timeout] user=%s detail=%s\n", u.Username, detail)
+	} else {
+		s.logAction(u.ID, u.Username, "logout", "", "管理员退出登录")
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -629,4 +672,41 @@ func (s *server) requireAuth(next func(http.ResponseWriter, *http.Request, authe
 func (s *server) logAction(userID int64, username, action, projectType, detail string) {
 	detail = normalizeGarbledText(detail)
 	_, _ = s.db.Exec(`INSERT INTO operation_logs(user_id,username,action,project_type,detail,created_at) VALUES(?,?,?,?,?,?)`, userID, username, action, projectType, detail, nowStr())
+}
+
+func formatBrowserCloseEventDetail(prefix string, req browserCloseEventReq) string {
+	idleTTLSeconds := req.IdleTTLSeconds
+	if idleTTLSeconds <= 0 {
+		idleTTLSeconds = int(runtimeCfg.SessionIdleTTL.Seconds())
+	}
+
+	closedAt := formatUnixMilliForLog(req.ClosedAtMS)
+	timeoutAtMS := req.TimeoutAtMS
+	if timeoutAtMS <= 0 && req.ClosedAtMS > 0 && idleTTLSeconds > 0 {
+		timeoutAtMS = req.ClosedAtMS + int64(idleTTLSeconds)*1000
+	}
+	timeoutAt := formatUnixMilliForLog(timeoutAtMS)
+	return fmt.Sprintf("%s，开始触发时间：%s，超时时长：%d 秒，超时时间：%s", prefix, closedAt, idleTTLSeconds, timeoutAt)
+}
+
+func formatBrowserCloseCancelDetail(req browserCloseEventReq) string {
+	idleTTLSeconds := req.IdleTTLSeconds
+	if idleTTLSeconds <= 0 {
+		idleTTLSeconds = int(runtimeCfg.SessionIdleTTL.Seconds())
+	}
+	closedAt := formatUnixMilliForLog(req.ClosedAtMS)
+	timeoutAtMS := req.TimeoutAtMS
+	if timeoutAtMS <= 0 && req.ClosedAtMS > 0 && idleTTLSeconds > 0 {
+		timeoutAtMS = req.ClosedAtMS + int64(idleTTLSeconds)*1000
+	}
+	timeoutAt := formatUnixMilliForLog(timeoutAtMS)
+	reopenedAt := formatUnixMilliForLog(req.ReopenedAtMS)
+	return fmt.Sprintf("浏览器系统页面已重新打开，取消页面关闭超时计时，开始触发时间：%s，超时时长：%d 秒，原超时时间：%s，重新打开时间：%s", closedAt, idleTTLSeconds, timeoutAt, reopenedAt)
+}
+
+func formatUnixMilliForLog(ms int64) string {
+	if ms <= 0 {
+		return "-"
+	}
+	return time.UnixMilli(ms).Format(time.RFC3339)
 }

@@ -71,6 +71,14 @@ type changePasswordReq struct {
 	NewPassword string `json:"new_password"`
 }
 
+type browserCloseEventReq struct {
+	Reason         string `json:"reason"`
+	ClosedAtMS     int64  `json:"closed_at_ms"`
+	TimeoutAtMS    int64  `json:"timeout_at_ms"`
+	ReopenedAtMS   int64  `json:"reopened_at_ms"`
+	IdleTTLSeconds int    `json:"idle_ttl_seconds"`
+}
+
 type projectCredentialReq struct {
 	Account  string `json:"account"`
 	Password string `json:"password"`

@@ -18,7 +18,7 @@ router.beforeEach(async (to) => {
     }
     return
   }
-  const validSession = auth.ensureSession()
+  const validSession = await auth.resumeSessionAfterReopen()
   if (to.path !== '/login' && !validSession) {
     return '/login'
   }

@@ -432,6 +432,7 @@ const cacheTTLSeconds = ref(600)
 const cacheCountdownSeconds = ref(600)
 let cacheCountdownTimer: number | null = null
 let reloginInProgress = false
+let windowCloseHandled = false
 const cacheReloginLockMs = 15 * 1000
 const projectFieldFocused = ref(false)
 const selectedAction = reactive<Record<string, string>>({
@@ -1715,10 +1716,27 @@ function handleVisibilityOrFocus() {
 }
 
 function handleWindowClose() {
-  auth.markWindowClosed()
+  if (windowCloseHandled) {
+    return
+  }
+  const meta = auth.markWindowClosed()
+  if (!meta || !auth.token) {
+    return
+  }
+  windowCloseHandled = true
+  fetch(`${auth.apiBase}/api/auth/window-close-start`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${auth.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(meta),
+    keepalive: true,
+  }).catch(() => undefined)
 }
 
 onMounted(async () => {
+  windowCloseHandled = false
   document.addEventListener('visibilitychange', handleVisibilityOrFocus)
   window.addEventListener('focus', handleVisibilityOrFocus)
   window.addEventListener('beforeunload', handleWindowClose)
