@@ -304,7 +304,8 @@ func printAddUser(ctx *printCtx, p map[string]interface{}) projectResult {
 		return projectResult{OK: false, Message: "新增用户失败", Error: err.Error()}
 	}
 	if toInt(data["code"]) == 0 {
-		return projectResult{OK: true, Message: "新增用户成功", Data: map[string]interface{}{"raw": data, "log_text": fmt.Sprintf("添加打印机用户 %s 成功", name)}}
+		logText := fmt.Sprintf("用户名：%s\n新密码：%s", name, password)
+		return projectResult{OK: true, Message: "新增用户成功", Data: map[string]interface{}{"raw": data, "log_text": logText}}
 	}
 	return projectResult{OK: false, Message: "新增用户失败", Error: toString(data["msg"]), Data: map[string]interface{}{"raw": data}}
 }
