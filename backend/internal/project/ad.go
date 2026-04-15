@@ -153,7 +153,7 @@ func adAddUser(client *http.Client, p map[string]interface{}) projectResult {
 		return projectResult{OK: false, Message: "新增用户失败", Error: "响应解析失败: " + err.Error()}
 	}
 	if toBool(data["isSuccess"]) {
-		logText := fmt.Sprintf("用户名：%s\n密码：%s", username, password)
+		logText := fmt.Sprintf("用户名：%s\n初始密码：%s", username, password)
 		return projectResult{OK: true, Message: "新增用户成功", Data: map[string]interface{}{"username": username, "password": password, "raw": data, "log_text": logText}}
 	}
 
@@ -559,7 +559,8 @@ func adResetPassword(client *http.Client, p map[string]interface{}) projectResul
 		return projectResult{OK: false, Message: "重置密码失败", Error: err.Error()}
 	}
 	if toBool(data["isSuccess"]) {
-		return projectResult{OK: true, Message: "重置密码成功", Data: map[string]interface{}{"raw": data, "log_text": "重置密码成功"}}
+		logText := fmt.Sprintf("用户名：%s\n新密码：%s", name, password)
+		return projectResult{OK: true, Message: "重置密码成功", Data: map[string]interface{}{"raw": data, "log_text": logText}}
 	}
 	return projectResult{OK: false, Message: "重置密码失败", Error: "执行失败", Data: map[string]interface{}{"raw": data}}
 }
